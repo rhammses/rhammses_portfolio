@@ -1,0 +1,233 @@
+---
+title: "Crowding"
+output: html_document
+---
+
+```{r}
+install.packages("patchwork")
+```
+
+
+```{r}
+library(tidyverse)
+library(tidycensus)
+library(ggplot2)
+library(patchwork) #to display two charts together
+library(dplyr)
+library(estimatr)
+
+```
+
+```{r}
+# Load dataset
+data <- read_csv("Crowding6-4-21.csv")
+fred <- read_csv("Unemp.csv")
+fred1 <- read_csv("Unemployment Data/NatUnempRate2000-2019.csv")
+us1 <- read_csv("NatCrowding2000-20019.csv")
+us2 <- read_csv("")
+
+rm(data)
+
+# Create random sample based on household number (SERIAL)
+set.seed(23478)
+us <- as.data.frame(data)
+fred <- as.data.frame(fred)
+#mysample <- group_by(SERIAL)
+us$rand <- runif(nrow(us))
+us <- us %>% group_by(SERIAL) %>% mutate(maxrand = max(rand, na.rm = TRUE))
+us <- subset(us, us$rand <=.01)
+head(us1,20)
+
+rm(data)
+us1 <- us %>% 
+  filter(AGE >= 18) #%>% 
+  #filter(HHINCOME != 9999999) #%>% 
+  #filter(INCWAGE != 999999) #999999 is what they put instead of NA
+
+# Rename columns for data1
+data1 <- rename(data1, depth_p2t=`Depth (% drop emp, P2T)`)
+```
+
+
+```{r}
+
+# Create a variables for HH comp based on income and doubled-up
+us$relative <- ifelse(us$RELATE>=3 & us$RELATE!=11,1,0)
+
+
+#mysample$unemp <- ifelse(mysample$EMPSTAT==2,1,0)
+us$dblup <- ifelse(us$AGE>=25 & us$relative==1 & us$AGE<=65,1,0)
+
+us$dbluphhinc <- ifelse(us$HHINCOME<=median(us$HHINCOME) & us$dblup==1,"1",
+                            ifelse(us$HHINCOME>=median(us$HHINCOME) & us$dblup==1,"3",
+                            ifelse(us$HHINCOME>=median(us$HHINCOME) & us$dblup==0,"4","2")))
+
+us$dblupinc <- ifelse(us$INCTOT<=median(us$INCTOT) & us$dblup==1,"1",
+                            ifelse(us$INCTOT>=median(us$INCTOT) & us$dblup==1,"3",
+                            ifelse(us$INCTOT>=median(us$INCTOT) & us$dblup==0,"4","2")))
+
+```
+
+```{r}
+#creating unemployed binomial variable
+us$unemp <- ifelse(us$EMPSTAT == 2, 1, 0)
+
+#creating unemployed in household binomial variable
+us <- us %>% 
+  group_by(SAMPLE, SERIAL) %>% 
+  mutate(unemp_hh = max(unemp, na.rm = TRUE))
+
+
+```
+
+
+```{r}
+headofhh <- us %>% 
+  filter(RELATE==1)
+
+#crowded variable
+household <- headofhh %>%
+  group_by(YEAR, STATEFIP) %>% 
+  summarise(wt = HHWT,
+            ppl = NUMPREC,
+            rms = ROOMS,
+            unemp_hh,
+            RACE,
+            HISPAN) %>% 
+  mutate(crowd = ppl/rms)
+
+#binomial if more ppl per rooms
+household$crowded <- ifelse(household$crowd > 1, 1, 0)
+
+#percent of crowded per state
+percentage <- household %>% 
+  select(YEAR, STATEFIP, crowded, wt, unemp_hh) %>% 
+  group_by(YEAR, STATEFIP) %>% 
+  summarise(crowdedsum = sum(crowded*wt),
+            n = sum(wt),
+            x = weighted.mean(crowded, wt),
+            y = weighted.mean(unemp_hh, wt)) %>% 
+  mutate(prcnt = crowdedsum/n)
+
+
+```
+
+
+```{r}
+#merge unemployment data with crowded percentages
+percentage <- cbind(percentage, fred)
+```
+
+
+```{r}
+
+#plot the national average
+natpercent <- percentage %>% 
+  group_by(YEAR) %>% 
+  summarise(crowded_mn = mean(prcnt),
+            unemp_mn = mean(unemp))
+```
+
+```{r}
+#plotting percent of crowded by year
+ggplot(natpercent, aes(YEAR, crowded_mn)) +
+  geom_point() +
+  geom_line()
+
+  
+```
+
+
+```{r}
+#plotting unemployment and crowded
+ggplot(natpercent, aes(x=YEAR)) +
+  geom_point(aes(y = unemp_mn, colour = "unemp_mn")) +
+  geom_line(aes(y = unemp_mn, colour = "unemp_mn"))
+
+```
+
+
+```{r}
+headofhh1 <- us1 %>% 
+  filter(RELATE==1)
+
+#crowded variable, annual
+household1 <- headofhh1 %>%
+  group_by(YEAR) %>% 
+  summarise(wt = HHWT,
+            ppl = NUMPREC,
+            rms = ROOMS) %>% 
+  mutate(crowd = ppl/rms)
+
+#binomial if more ppl per rooms
+household1$crowded <- ifelse(household1$crowd > 1, 1, 0)
+
+#percent of crowded per state
+percentage1 <- household1 %>% 
+  select(YEAR, crowded, wt) %>% 
+  group_by(YEAR) %>% 
+  summarise(crowdedsum = sum(crowded*wt),
+            n = sum(wt),
+            x = weighted.mean(crowded, wt)) %>% 
+  mutate(prcnt = crowdedsum/n)
+
+
+```
+
+
+```{r}
+#merge unemployment data with crowded percentages
+percentage1 <- cbind(percentage1, fred1)
+```
+
+
+
+```{r}
+#plotting percent of crowded by year
+x1 <- ggplot(percentage1, aes(YEAR, prcnt)) +
+  geom_point() +
+  geom_line() +
+  labs(title = paste("Crowded Percentage 2000-2019"),
+       caption = "Source: BLS",
+       y = "Crowded %")
+
+#plotting unemployment rate by year
+x2 <- ggplot(percentage1, aes(YEAR, UNRATE)) +
+  geom_point() +
+  geom_line() +
+  labs(title = paste("Unemployment Rate 2000-2019"),
+       caption = "Source: BLS",
+       y = "Unemp Rate")
+
+#display both charts side by side w patchwork package
+x1 + x2
+
+```
+
+```{r}
+## Regressions ##
+#regression of crowded on unemployment
+reg1 <- lm_robust(prcnt ~ unemp, data = percentage)
+summary(reg1)
+```
+
+
+```{r}
+## Regressions ##
+#regression of crowded on unemployment
+reg2 <- lm_robust(prcnt ~ unemp + as.factor(YEAR) + as.factor(STATEFIP), data = percentage)
+summary(reg2)
+
+```
+
+
+```{r}
+
+#regression of crowded on unemployment
+reg2 <- lm_robust(crowded ~ unemp, data = us)
+summary(reg2)
+
+```
+
+
+
